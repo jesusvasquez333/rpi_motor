@@ -1,7 +1,7 @@
 #include <bcm2835.h>
 #include <stdio.h>
 
- #define	CONTROL_VER_1
+#define	CONTROL_VER_1
 
 #define WINDA_M1	RPI_V2_GPIO_P1_03
 #define WINDA_M2	RPI_V2_GPIO_P1_05

@@ -75,9 +75,9 @@ int help(char *command)
 	
 	printf("Developed by Jesus Vasquez.\n");
 	#ifdef CONTROL_VER_1
-		printf("Usage: %s <MODE> <SPEED>\n Where:\n  <MODE> 0 = 16 microsteps; 1 = 8 microsteps; 2 = 4 microsteps; 3 = 2 microsteps; and\n  <SPEED> 0 = 1875 rpm; 1 = 937,5 rpm; ... ; 7 = 14,6 rpm; ... ; 15 = 0,06 rpm.\n", command);
+		printf("Usage: %s <MODE> <SPEED> <ACCE> <ACCE_F>\n Where:\n  <MODE> 0 = 16 microsteps; 1 = 8 microsteps; 2 = 4 microsteps; 3 = 2 microsteps;\n  <SPEED> 0 = 1875 rpm; 1 = 937,5 rpm; ... ; 7 = 14,6 rpm; ... ; 15 = 0,06 rpm.\n  <ACCE> 0 = without acceleration curve; 1 = with acceleration curve. and\n  <ACCE_F> = acceleration factor (1..5)\n", command);
 	#else
-		printf("Usage: %s <MODE> <SPEED>\n Where:\n  <MODE> 0 = 32 microsteps; 1 = 16 microsteps; 2 = 8 microsteps; 3 = 4 microsteps; and\n  <SPEED> 0 = 937,5 rpm; 1 = 468,8 rpm; ... ; 7 = 7,32 rpm; ... ; 15 = 0,03 rpm.\n", command);
+		printf("Usage: %s <MODE> <SPEED> <ACCE> <ACCE_F>\n Where:\n  <MODE> 0 = 32 microsteps; 1 = 16 microsteps; 2 = 8 microsteps; 3 = 4 microsteps;\n  <SPEED> 0 = 937,5 rpm; 1 = 468,8 rpm; ... ; 7 = 7,32 rpm; ... ; 15 = 0,03 rpm.\n  <ACCE> 0 = without acceleration curve; 1 = with acceleration curve. and\n  <ACCE_F> = acceleration factor (1..5)\n", command);
 	#endif
 	return 1;
 }
@@ -95,6 +95,10 @@ int main(int argc, char **argv)
 	uint8_t lookuptable_delta;
 	uint8_t microstep_max;
 	int microstep_count, microstep_togo, microstep_input;
+	uint8_t speed_var = 8;
+	uint16_t delay_var, delay_var_final;
+	uint16_t speedchange_count = 0;
+	uint8_t use_acceleration, acceleration_factor;
 	
 	uint8_t dac_vals[] = {0, 1, 3, 4, 6, 7, 8, 10, 11, 12, 12, 13, 14, 14, 15, 15, 15};
 
@@ -106,7 +110,7 @@ int main(int argc, char **argv)
 		char *speed_str[] = {"937,5 rpm", "468,75 rpm", "234,38 rpm", "117,19 rpm", "58,59 rpm", "29,30 rpm", "14,65 rpm", "7,32 rpm", "3,66 rpm", "1,83 rpm", "0,92 rpm", "0,46 rpm", "0,23 rpm", "0,11 rpm", "0,06 rpm", "0,03 rpm"};
 	#endif
 	
-	if (argc != 3)
+	if (argc != 5)
 		return help(argv[0]);
 	
 	mode = atoi(argv[1]); 
@@ -116,6 +120,14 @@ int main(int argc, char **argv)
 	speed = atoi(argv[2]); 
 	if (speed > 15)
 		return help(argv[0]);
+	
+	use_acceleration = atoi(argv[3]);
+	if (use_acceleration > 1)
+		return help(argv[0]);
+		
+	acceleration_factor = atoi(argv[4]); 
+	if ((acceleration_factor  < 1) | (acceleration_factor  > 5))
+		return help(argv[0]);
 		
     if (!bcm2835_init())
     {
@@ -123,7 +135,19 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	microstep_time = 10 * (uint16_t)(1 << (mode + speed));
+	if (use_acceleration)
+	{
+		if (speed < 8)
+			delay_var = 256;
+		else
+			delay_var = (1 << speed);
+
+		delay_var_final = (1 << speed);
+	}
+	else
+		delay_var = (1 << speed);
+
+	microstep_time = 10 * delay_var * (uint16_t)(1 << mode);
 	lookuptable_delta = (uint8_t)(1 << mode);
 	microstep_max = (uint8_t)(1 << (4 - mode));
 	
@@ -136,6 +160,8 @@ int main(int argc, char **argv)
 	printf("Developed by Jesus Vasquez.\n");
 	printf("Mode selected = %s\n", mode_str[mode]);
 	printf("Speed selected = %s\n", speed_str[speed]);
+	printf("Use acceleration curve = %d\n", use_acceleration);
+	printf("Acceleration factor = %d\n", acceleration_factor);
 	
     // Set the pin to be an output
     bcm2835_gpio_fsel(WINDA_M1, BCM2835_GPIO_FSEL_OUTP);
@@ -151,13 +177,14 @@ int main(int argc, char **argv)
 
 	microstep_count = 0;
 	microstep_togo = 0;
+		
     while (1)
     {
 					
 		if (microstep_count != microstep_togo)
 		{
 			direction = (microstep_count < microstep_togo);
-////
+
 			#ifdef CONTROL_VER_1
 				switch(step_index)
 				{
@@ -186,7 +213,6 @@ int main(int argc, char **argv)
 						MotorWind_SetCurrent(B, dac_vals[(microstep_max - microstep_index) * lookuptable_delta]);
 						break;
 				}
-////
 			#else			
 				switch(step_index)
 				{
@@ -245,7 +271,7 @@ int main(int argc, char **argv)
 			{
 				microstep_index = 0;
 				if (++step_index >= STEP_MAX)
-					step_index = 0;
+					step_index = 0;				
 			}
 			
 			bcm2835_delayMicroseconds(microstep_time);
@@ -254,6 +280,19 @@ int main(int argc, char **argv)
 				microstep_count++;
 			else
 				microstep_count--;
+				
+			if (use_acceleration)
+			{
+				if (delay_var > delay_var_final)
+				{
+					if (++speedchange_count >= acceleration_factor)
+					{
+						speedchange_count = 0;
+						delay_var--;
+						microstep_time = 10 * delay_var * (uint16_t)(1 << mode);
+					}
+				}
+			}
 
 		}
 		else
@@ -263,6 +302,19 @@ int main(int argc, char **argv)
 			scanf("%d",&microstep_input);
 			microstep_togo += microstep_input;
 			printf("Going to position %d ...\n\n", microstep_togo);
+
+			if (use_acceleration)
+			{
+				if (speed < 8)
+					delay_var = 256;
+				else
+					delay_var = (1 << speed);
+
+				delay_var_final = (1 << speed);
+				
+				microstep_time = 10 * delay_var * (uint16_t)(1 << mode);
+			}
+				
 		}
 		
     }
